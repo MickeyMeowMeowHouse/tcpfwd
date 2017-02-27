@@ -1,0 +1,10 @@
+autom4te.cache
+configure
+config.status
+config.log
+config.h
+makefile
+tcpfwd.log
+tcpfwd
+*.o
+

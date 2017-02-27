@@ -1,0 +1,16 @@
+*** TCPFWD ***
+========
+
+Usage:
+    # autoconf
+    # ./configure
+    # make
+    # make install
+  Then edit your tcpfwd.conf for configuration
+    # service tcpfwd start
+  Done.
+
+
+
+
+https://www.0xaa55.com/forum.php?mod=viewthread&tid=1991

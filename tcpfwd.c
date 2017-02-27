@@ -705,14 +705,18 @@ static bool_t _Inst_LoadCFG(fwdinst_p pInst, const char*cfg_file)
 		}
 		
 		fprintf(cfgfile,
-"# backlog parameter of a listen() function call.\n"
+"# Max acceptable connections\n"
 "listen_backlog %u\n"
-"# write traffic information to log file.\n"
-"log_traffic 1\n"
-"# redirect <source port>, <dest address>:<dest port> [tcp_nodelay],[, packet to source] [, packet to destination]\n"
-"# packet size defaults to %u\n"
-"#redirect 80, 12.34.56.78:8080\n"
-"# Which means any tcp packet to this server's 80 port will be sent to 12.34.56.78:8080\n",
+"\n"
+"# Do we write any packet traffics to the log file?\n"
+"# If yes, set it to 1, this may let the log file become very big.\n"
+"log_traffic 0\n"
+"\n"
+"# Set a forwarding rule, the parameters is:\n"
+"# redirect <port>, <destination ip>:<destination port>, [1|0 for set TCP_NODELAY], [source MTU], [destnation MTU]\n"
+"# Default MTU is %u\n"
+"# Here comes an example\n"
+"redirect 80, 192.168.1.105:80, 1, 8192, 8192\n",
 			backlog_default, def_packet_size);
 		
 		fclose(cfgfile);
