@@ -1,0 +1,15 @@
+CC=@CC@
+LD=@CC@
+CFLAGS=@CFLAGS@ -O3 -Wall
+
+tcpfwd: tcpfwd.o
+	$(LD) -o $@ $^
+
+.PHONY: clean
+clean:
+	rm -f tcpfwd *.o
+
+.PHONY: install
+install:
+	cp tcpfwd_init_script /etc/init.d/tcpfwd
+	chmod +x /etc/init.d/tcpfwd
