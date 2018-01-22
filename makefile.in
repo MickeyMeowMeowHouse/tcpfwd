@@ -2,14 +2,26 @@ CC=@CC@
 LD=@CC@
 CFLAGS=@CFLAGS@ -O3 -Wall
 
+all: tcpfwd
+
 tcpfwd: tcpfwd.o
 	$(LD) -o $@ $^
 
-.PHONY: clean
+.PHONY: clean install uninstall
 clean:
 	rm -f tcpfwd *.o
 
-.PHONY: install
-install:
-	cp tcpfwd_init_script /etc/init.d/tcpfwd
-	chmod +x /etc/init.d/tcpfwd
+install: tcpfwd
+	mkdir -p /usr/bin/
+	cp tcpfwd /usr/bin/
+	chmod +x tcpfwd_init_script
+	if [ -d /etc/init.d ]; then cp tcpfwd_init_script /etc/init.d/tcpfwd ; fi
+	if [ -d /etc/rc.d ]; then cp tcpfwd_init_script /etc/rc.d/tcpfwd ; fi
+	echo "Installed"
+
+uninstall:
+	./tcpfwd_init_script stop > /dev/null
+	rm -f /usr/bin/tcpfwd
+	if [ -d /etc/init.d ]; then rm -f /etc/init.d/tcpfwd ; fi
+	if [ -d /etc/rc.d ]; then rm -f /etc/rc.d/tcpfwd ; fi
+	echo "Uninstalled"
