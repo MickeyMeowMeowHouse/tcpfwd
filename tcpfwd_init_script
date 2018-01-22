@@ -5,7 +5,7 @@
 #
 # chkconfig: 2345 80 05
 # description: TCP connection forwarder daemon
-# config: /home/tcpfwd/tcpfwd.conf
+# config: /etc/tcpfwd/tcpfwd.conf
 # pidfile: /temp/tcpfwd.lock
 
 # source function library
@@ -16,8 +16,7 @@ prog="tcpfwd"
 
 start() {
 	echo -n $"Starting $prog:"
-	cd /home/tcpfwd/
-	./tcpfwd -c /home/tcpfwd/tcpfwd.conf -d
+	. /usr/bin/tcpfwd -c /etc/tcpfwd/tcpfwd.conf -d
 	RETVAL=$?
 	if [ "$RETVAL" = 0 ]; then
 		touch /var/lock/subsys/$prog
