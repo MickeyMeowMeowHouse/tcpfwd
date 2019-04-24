@@ -2,23 +2,23 @@
 
 // These we could have
 #include<stdio.h>
+#include<stdlib.h>
+#include<stdint.h>
+#include<stdarg.h>
 #include<errno.h>
 #include<ctype.h>
 #include<signal.h>
-#include<stdarg.h>
-#include<malloc.h>
-#include<memory.h>
+#include<string.h>
 #include<time.h>
 
 // There's something we have and there's something we didn't have
 #ifdef WIN32
-#include<stdint.h> // VS didn't have inttypes.h
 #include<WinSock2.h>
 #include<ws2tcpip.h> // for using struct sockaddr_in6 ... but now it didn't support IPv6
+#include<xmmintrin.h>
 #else
 #include<fcntl.h>
 #include<unistd.h>
-#include<inttypes.h>
 #include<arpa/inet.h>
 #include<sys/socket.h>
 #include<netinet/ip.h>
@@ -35,6 +35,9 @@
 #define fwd_buffer_size 8192			// forward buffer size
 #define def_packet_size 1472			// mtu for splitting packets
 
+#define MAX_BACKOFF_ITERS (RAND_MAX > 0x10000 ? 0x10000 : RAND_MAX)
+#define MAX_BO_SLEEPS 20
+
 typedef int bool_t, *bool_p;
 
 // my address structure
@@ -47,11 +50,12 @@ typedef union address_u
 }address_t, *address_p;
 
 #ifdef WIN32
+#define cpu_relax() _mm_pause()
 typedef INT_PTR ssize_t; // signed size_t in windows
 typedef int socklen_t;
-static void _done()
+static void sleep_relax(unsigned sleeps)
 {
-	Sleep(1); // In windows, Sleep(0) will die in win98
+	Sleep(sleeps); // In windows, Sleep(0) will die in win98
 }
 static int _socket_errno() // Translate error number
 {
@@ -115,9 +119,21 @@ static int _socket_errno() // Translate error number
 #define socket_errno _socket_errno() // pretend as a variable
 #define MSG_NOSIGNAL 0 // Windows didn't have this, pretend as we have
 #else // we don't think about what other systems, just for unix
-static void _done()
+#if __x86_64__ || i386
+#define cpu_relax() __asm__ __volatile__("pause")
+#elif __arm__ || __aarch64__
+#define cpu_relax() __asm__ __volatile__("yield")
+#elif __mips__
+#define cpu_relax() __asm__ __volatile__(".word 0x00000140")
+#else
+#define cpu_relax() __asm__ __volatile__("pause")
+#endif
+static void sleep_relax(unsigned sleeps)
 {
-	sleep(0);
+	if(sleeps)
+		usleep(sleeps * 1000);
+	else
+		usleep(500);
 }
 #define socket_errno errno
 static int closesocket(int sockfd) // sockets in linux is a file descriptor
@@ -141,7 +157,7 @@ static char*_strtime(char*timestr)
 
 //=============================================================================
 // socket connection
-typedef struct
+typedef struct fwdconn_struct
 {
 	int sockfd_src; // source
 	int sockfd_dst; // destination
@@ -154,7 +170,7 @@ typedef struct
 	socklen_t addr_size; // source address length
 }fwdconn_t, *fwdconn_p;
 
-typedef struct
+typedef struct fwdroute_struct
 {
 	int listen_socket; // a socket for accepting connections
 	
@@ -172,7 +188,7 @@ typedef struct
 	size_t max_fwd_conn; // array capacity
 }fwdroute_t, *fwdroute_p;
 
-typedef struct
+typedef struct fwdinst_struct
 {
 	fwdroute_p	pRoute; // routers
 	size_t		num_route; // how many
@@ -182,12 +198,58 @@ typedef struct
 	bool_t		log_traffic; // do we log any packets?
 }fwdinst_t, *fwdinst_p;
 
+typedef struct bo_struct
+{
+	unsigned cr;
+	unsigned sr;
+	unsigned max_cr;
+	unsigned max_sr;
+}bo_t, *bo_p;
+
+static void bo_reset(bo_p bo)
+{
+	memset(bo, 0, sizeof *bo);
+	bo->max_cr = MAX_BACKOFF_ITERS;
+	bo->max_sr = MAX_BO_SLEEPS;
+}
+static void bo_update(bo_p bo)
+{
+	int s = 0;
+	
+	if(bo->cr < bo->max_cr)
+	{
+		if(!bo->cr) bo->cr = 1;
+		else bo->cr <<= 1;
+	}
+	else
+	{
+		bo->cr = bo->max_cr;
+		s = 1;
+	}
+	
+	if(s)
+	{
+		if(bo->sr < bo->max_sr)
+		{
+			if(!bo->sr) bo->sr = 1;
+			else bo->sr <<= 1;
+		}
+		else bo->sr = bo->max_sr;
+		sleep_relax(rand() % bo->sr);
+	}
+	else
+	{
+		int r = rand() % bo->cr + 1;
+		while(r--) cpu_relax();
+	}
+}
+
 static volatile bool_t _g_Term = 0; // global quitting?
 static bool_t _g_LogToScreen = 1; // do we write log to screen 
 
 void Inst_Log(char *message, ...);
 fwdinst_p Inst_Create(bool_t DoDaemonize, const char *cfg_file);
-void Inst_Run(fwdinst_p pInst);
+int Inst_Run(fwdinst_p pInst);
 void Inst_Term(fwdinst_p pInst);
 
 static int _Inst_Daemonize();
@@ -809,9 +871,10 @@ void Inst_Term(fwdinst_p pInst)
 //Func: Inst_Run
 //Desc: Run instance, do forwarding
 //------------------------------------------------------------------------------
-void Inst_Run(fwdinst_p pInst)
+int Inst_Run(fwdinst_p pInst)
 {
 	size_t i;
+	int rv = 0;
 
 	if(pInst->max_route > pInst->num_route)
 	{
@@ -851,6 +914,7 @@ void Inst_Run(fwdinst_p pInst)
 		}
 		else
 		{
+			rv = 1;
 			if(_SetSocketBlockingEnabled(sockfd, 0))
 			{
 				if(addr_from.sa.sa_family == AF_INET)
@@ -889,6 +953,7 @@ void Inst_Run(fwdinst_p pInst)
 					fwd_buffer_size - pRoute->fwd_conn[j].cb_src, 0);
 				if(cbRecv > 0)
 				{
+					rv = 1;
 					pRoute->fwd_conn[j].cb_src += cbRecv;
 					if(pInst->log_traffic)
 					{
@@ -966,6 +1031,7 @@ void Inst_Run(fwdinst_p pInst)
 					cbSendSize, MSG_NOSIGNAL);
 				if(cbSend > 0 && cbSend <= pRoute->fwd_conn[j].cb_src)
 				{
+					rv = 1;
 					pRoute->fwd_conn[j].cb_src -= cbSend;
 					if(pRoute->fwd_conn[j].cb_src)
 					{
@@ -1050,6 +1116,7 @@ void Inst_Run(fwdinst_p pInst)
 					fwd_buffer_size - pRoute->fwd_conn[j].cb_dst, 0);
 				if(cbRecv > 0)
 				{
+					rv = 1;
 					pRoute->fwd_conn[j].cb_dst += cbRecv;
 					if(pInst->log_traffic)
 					{
@@ -1129,6 +1196,7 @@ void Inst_Run(fwdinst_p pInst)
 					cbSendSize, MSG_NOSIGNAL);
 				if(cbSend > 0 && cbSend <= pRoute->fwd_conn[j].cb_dst)
 				{
+					rv = 1;
 					pRoute->fwd_conn[j].cb_dst -= cbSend;
 					if(pRoute->fwd_conn[j].cb_dst)
 					{
@@ -1192,7 +1260,8 @@ void Inst_Run(fwdinst_p pInst)
 
 		}
 	}
-BreakLoop:;
+BreakLoop:
+	return rv;
 }
 
 //==============================================================================
@@ -1313,10 +1382,14 @@ int main(int argc, char**argv)
 	pInst = Inst_Create(DoDaemonize, sz_cfg_file);
 	if(pInst)
 	{
+		bo_t bo;
+		bo_reset(&bo);
 		while(!_g_Term)
 		{
-			Inst_Run(pInst);
-			_done();
+			if(Inst_Run(pInst))
+				bo_reset(&bo);
+			else
+				bo_update(&bo);
 		}
 		Inst_Term(pInst);
 	}
