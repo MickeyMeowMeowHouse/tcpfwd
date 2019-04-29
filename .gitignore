@@ -8,4 +8,5 @@ tcpfwd.log
 tcpfwd
 *.bat
 *.o
-
+tcpfwd.exe
+tcpfwd.conf

@@ -2,10 +2,14 @@ CC=@CC@
 LD=@CC@
 CFLAGS=@CFLAGS@ -O3 -Wall
 
+ifeq ($(OS),Windows_NT)
+	LDLIBS += -lws2_32
+endif
+
 all: tcpfwd
 
 tcpfwd: tcpfwd.o
-	$(LD) -o $@ $^
+	$(LD) -o $@ $^ $(LDLIBS)
 
 .PHONY: clean install uninstall
 clean:
